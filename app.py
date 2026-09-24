@@ -15,7 +15,7 @@ st.set_page_config(page_title="AI Document Assistant", page_icon="📄", layout=
 
 
 # ------------------------------------------------------------------------------
-# 1. Caching Heavy Resources
+# 1. Caching Heavy Resources & Client Setup
 # ------------------------------------------------------------------------------
 @st.cache_resource(show_spinner="Loading Embedding Model...")
 def load_embedding_model():
@@ -342,17 +342,31 @@ def main():
         with st.spinner("Generating answer via Groq..."):
             client = get_groq_client()
             
-            # Active production Groq models
-            active_models = [
-                "llama-3.3-70b-versatile",
-                "llama-3.1-8b-instant",
-                "gemma2-9b-it"
-            ]
-            
+            # Dynamically retrieve active models available to your Groq key
+            candidate_models = []
+            try:
+                fetched_models = client.models.list().data
+                for m in fetched_models:
+                    model_id = m.id.lower()
+                    # Exclude non-chat / specialized models
+                    if not any(x in model_id for x in ["whisper", "guard", "eval", "tool", "embedding"]):
+                        candidate_models.append(m.id)
+            except Exception:
+                pass
+
+            # Fallback list if dynamic listing fails
+            if not candidate_models:
+                candidate_models = [
+                    "llama-3.3-70b-versatile",
+                    "llama-3.1-8b-instant",
+                    "llama-3.2-3b-preview",
+                    "llama3-70b-8192"
+                ]
+
             answer = None
             error_details = ""
 
-            for model_name in active_models:
+            for model_name in candidate_models:
                 try:
                     response = client.chat.completions.create(
                         model=model_name,
