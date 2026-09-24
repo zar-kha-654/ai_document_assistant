@@ -351,15 +351,34 @@ def main():
 
         with st.spinner("Generating answer via Groq..."):
             client = get_groq_client()
-            response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.0
-            )
-            answer = response.choices[0].message.content
+            
+            # Primary and fallback model options
+            models_to_try = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+            answer = None
+            
+            for model_name in models_to_try:
+                try:
+                    response = client.chat.completions.create(
+                        model=model_name,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        temperature=0.0
+                    )
+                    answer = response.choices[0].message.content
+                    break  # Break loop if request succeeds
+                except Exception as e:
+                    if "404" in str(e) or "NotFoundError" in str(type(e).__name__):
+                        st.warning(f"Model '{model_name}' not available on this API key. Trying alternative...")
+                        continue
+                    else:
+                        st.error(f"Groq API Error: {e}")
+                        st.stop()
+
+            if not answer:
+                st.error("Could not generate answer. Please verify your Groq API key and accessible models.")
+                st.stop()
 
         # Display Answer
         st.subheader("💡 Answer")
