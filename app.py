@@ -10,12 +10,92 @@ from docx import Document as DocxDocument
 from sentence_transformers import SentenceTransformer
 from groq import Groq
 
-# Set page layout
-st.set_page_config(page_title="AI Document Assistant", page_icon="📄", layout="wide")
+# ------------------------------------------------------------------------------
+# Page Config & Custom Modern CSS
+# ------------------------------------------------------------------------------
+st.set_page_config(
+    page_title="DocuMind AI | Document Intelligence Assistant",
+    page_icon="⚡",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom Styling
+st.markdown("""
+<style>
+    /* Global Theme & Font Adjustments */
+    .stApp {
+        background-color: #0e1117;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    
+    /* Header Styling */
+    .main-title {
+        font-size: 2.2rem !important;
+        font-weight: 800 !important;
+        background: linear-gradient(90deg, #3B82F6 0%, #8B5CF6 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 0.2rem !important;
+    }
+    .sub-title {
+        color: #9CA3AF;
+        font-size: 1.05rem;
+        margin-bottom: 2rem;
+    }
+    
+    /* Modern Card Layouts */
+    .custom-card {
+        background-color: #1E293B;
+        border: 1px solid #334155;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 15px;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    }
+    
+    /* Upload Drag and Drop zone customization */
+    [data-testid="stFileUploadDropzone"] {
+        border: 2px dashed #3B82F6 !important;
+        background-color: #111827 !important;
+        border-radius: 12px !important;
+    }
+    
+    /* Badge tags */
+    .tag-badge {
+        display: inline-block;
+        background-color: #1E3A8A;
+        color: #93C5FD;
+        font-size: 0.75rem;
+        font-weight: 600;
+        padding: 4px 10px;
+        border-radius: 20px;
+        margin-right: 6px;
+    }
+    
+    .chunk-card {
+        background-color: #0F172A;
+        border-left: 4px solid #3B82F6;
+        padding: 12px 16px;
+        border-radius: 0 8px 8px 0;
+        margin-bottom: 12px;
+        font-family: 'Fira Code', monospace;
+        font-size: 0.88rem;
+        color: #E2E8F0;
+    }
+
+    /* Primary Buttons */
+    .stButton>button {
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+        transition: all 0.2s ease-in-out !important;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 
 # ------------------------------------------------------------------------------
-# 1. Caching Heavy Resources & Client Setup
+# 1. Caching Heavy Resources & Client Setup (UNTOUCHED LOGIC)
 # ------------------------------------------------------------------------------
 @st.cache_resource(show_spinner="Loading Embedding Model...")
 def load_embedding_model():
@@ -46,7 +126,7 @@ def get_groq_client():
 
 
 # ------------------------------------------------------------------------------
-# 2. Text Extraction Functions
+# 2. Text Extraction Functions (UNTOUCHED LOGIC)
 # ------------------------------------------------------------------------------
 def clean_text(text):
     """Normalizes whitespace and removes unprintable characters."""
@@ -126,7 +206,7 @@ def process_file_path(file_path, file_name):
 
 
 # ------------------------------------------------------------------------------
-# 3. Google Drive Handling
+# 3. Google Drive Handling (UNTOUCHED LOGIC)
 # ------------------------------------------------------------------------------
 def fetch_from_google_drive(drive_url):
     """Downloads files/folders from Google Drive using gdown."""
@@ -167,7 +247,7 @@ def fetch_from_google_drive(drive_url):
 
 
 # ------------------------------------------------------------------------------
-# 4. Improved Paragraph-Aware Chunking
+# 4. Paragraph-Aware Chunking (UNTOUCHED LOGIC)
 # ------------------------------------------------------------------------------
 def chunk_text(documents, target_chunk_size=1000, overlap_size=200):
     """
@@ -187,11 +267,9 @@ def chunk_text(documents, target_chunk_size=1000, overlap_size=200):
             if not para:
                 continue
                 
-            # If adding this paragraph keeps us around the target size, combine them
             if len(current_chunk) + len(para) <= target_chunk_size:
                 current_chunk += ("\n\n" + para) if current_chunk else para
             else:
-                # Store existing chunk if non-empty
                 if current_chunk.strip():
                     chunks.append({
                         "text": current_chunk.strip(),
@@ -199,7 +277,6 @@ def chunk_text(documents, target_chunk_size=1000, overlap_size=200):
                         "page": doc["page"]
                     })
                 
-                # Handle single oversized paragraphs
                 if len(para) > target_chunk_size:
                     start = 0
                     while start < len(para):
@@ -226,7 +303,7 @@ def chunk_text(documents, target_chunk_size=1000, overlap_size=200):
 
 
 # ------------------------------------------------------------------------------
-# 5. Hybrid Search Pipeline (Vector FAISS + Keyword)
+# 5. Hybrid Search Pipeline (UNTOUCHED LOGIC)
 # ------------------------------------------------------------------------------
 def build_vector_store(chunks, embed_model):
     """Generates embeddings and initializes FAISS vector index."""
@@ -282,36 +359,60 @@ def hybrid_search(query, chunks, index, embed_model, top_k=5, alpha=0.8):
 
 
 # ------------------------------------------------------------------------------
-# 6. Streamlit UI & Application Lifecycle
+# 6. Streamlit Modern UI Layout & State Management
 # ------------------------------------------------------------------------------
 def main():
-    st.title("📄 AI Document Assistant")
-    st.markdown("Upload local documents or paste Google Drive links to analyze, search, and ask questions.")
-
+    # Session State Initialization
     if "chunks" not in st.session_state:
         st.session_state.chunks = []
     if "faiss_index" not in st.session_state:
         st.session_state.faiss_index = None
     if "docs_processed" not in st.session_state:
         st.session_state.docs_processed = []
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+    if "ratings" not in st.session_state:
+        st.session_state.ratings = {}
 
     embed_model = load_embedding_model()
 
+    # ---------------- Sidebar: Knowledge Base Management ----------------
     with st.sidebar:
-        st.header("📂 Document Ingestion")
-        
-        uploaded_files = st.file_uploader(
-            "Upload PDF, DOCX, TXT, MD",
-            type=["pdf", "docx", "txt", "md"],
-            accept_multiple_files=True
-        )
-        
+        st.image("https://img.icons8.com/fluency/96/brain.png", width=64)
+        st.title("Knowledge Base")
+        st.caption("Upload documents to build your vector search index.")
         st.markdown("---")
-        st.subheader("🌐 Google Drive Link")
-        drive_url = st.text_input("Paste Drive File or Folder Link:")
         
-        process_btn = st.button("Process Documents", type="primary")
+        st.subheader("1. Local Files")
+        uploaded_files = st.file_uploader(
+            "Upload files",
+            type=["pdf", "docx", "txt", "md"],
+            accept_multiple_files=True,
+            label_visibility="collapsed"
+        )
+        st.markdown("""
+            <div style='margin-top: -10px; margin-bottom: 15px;'>
+                <span class='tag-badge'>PDF</span>
+                <span class='tag-badge'>DOCX</span>
+                <span class='tag-badge'>TXT</span>
+                <span class='tag-badge'>MD</span>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        st.subheader("2. Cloud Source")
+        drive_url = st.text_input("Google Drive Folder or File Link", placeholder="https://drive.google.com/...")
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        process_btn = st.button("🚀 Process & Build Index", type="primary", use_container_width=True)
 
+        st.markdown("---")
+        st.subheader("📊 System Status")
+        if st.session_state.chunks:
+            st.success(f"🟢 **Index Ready**\n\n**{len(st.session_state.chunks)}** chunks active in memory.")
+        else:
+            st.info("🟡 **Index Empty**\n\nPlease upload documents to begin.")
+
+    # Processing Action
     if process_btn:
         all_extracted_docs = []
         processed_file_names = []
@@ -335,7 +436,7 @@ def main():
                 processed_file_names.append("Google Drive Source")
 
         if all_extracted_docs:
-            with st.spinner("Chunking text and generating embeddings..."):
+            with st.spinner("Processing & embedding chunks..."):
                 chunks = chunk_text(all_extracted_docs)
                 faiss_idx, _ = build_vector_store(chunks, embed_model)
                 
@@ -343,105 +444,182 @@ def main():
                 st.session_state.faiss_index = faiss_idx
                 st.session_state.docs_processed = processed_file_names
                 
-            st.success(f"Processing Complete! Generated **{len(chunks)}** text chunks.")
+            st.toast(f"Success! Indexed {len(chunks)} text chunks.", icon="🎉")
         else:
-            st.warning("No valid text extracted. Check your uploaded files or link.")
+            st.error("No text could be extracted. Check your uploaded files or link.")
 
-    if st.session_state.chunks:
-        st.info(f"📊 **Index Active:** {len(st.session_state.chunks)} total text chunks stored in memory.")
+    # ---------------- Main Dashboard Header ----------------
+    st.markdown('<div class="main-title">DocuMind AI</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-title">Modern Hybrid RAG Assistant with Paragraph Chunk Inspection</div>', unsafe_allow_html=True)
 
-    st.markdown("### 💬 Ask Questions")
-    user_query = st.text_input("Enter your question based on the document context:")
+    # Tabs for Workspace & Chunk Analysis
+    tab_chat, tab_chunks = st.tabs(["💬 AI Chat Assistant", "🔍 Chunk Inspector & Data Breakdown"])
 
-    if user_query:
-        if not st.session_state.chunks or st.session_state.faiss_index is None:
-            st.warning("Please upload and process documents before asking questions.")
-            return
+    # ---------------- TAB 1: Chat & QA ----------------
+    with tab_chat:
+        # Display existing message history
+        for idx, message in enumerate(st.session_state.chat_history):
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+                
+                # Render sources card for assistant messages
+                if message["role"] == "assistant" and "sources" in message:
+                    with st.expander("📚 View Retrieved Sources & Relevance Scores"):
+                        for s_idx, res in enumerate(message["sources"], 1):
+                            chunk = res["chunk"]
+                            page_str = f" | Page {chunk['page']}" if chunk['page'] is not None else ""
+                            st.markdown(f"**Source {s_idx}:** `{chunk['file_name']}`{page_str} (Score: `{res['score']:.3f}`)")
+                            st.caption(chunk["text"])
+                            st.divider()
 
-        # Increased top_k to 5 to provide more background context
-        relevant_results = hybrid_search(
-            query=user_query,
-            chunks=st.session_state.chunks,
-            index=st.session_state.faiss_index,
-            embed_model=embed_model,
-            top_k=5
-        )
+                # Render Rating/Review Component
+                if message["role"] == "assistant":
+                    rating_key = f"rating_{idx}"
+                    st.caption("How was this response?")
+                    col_rate1, col_rate2 = st.columns([1, 4])
+                    with col_rate1:
+                        user_rating = st.feedback("thumbs", key=f"fb_{idx}")
+                    with col_rate2:
+                        feedback_text = st.text_input("Optional feedback", key=f"txt_{idx}", label_visibility="collapsed", placeholder="Add feedback details...")
+                    if user_rating is not None:
+                        st.session_state.ratings[idx] = {"score": user_rating, "feedback": feedback_text}
 
-        context_parts = []
-        for r in relevant_results:
-            c = r["chunk"]
-            page_info = f" (Page {c['page']})" if c['page'] is not None else ""
-            context_parts.append(f"[Source: {c['file_name']}{page_info}]\n{c['text']}")
-        
-        formatted_context = "\n\n====================\n\n".join(context_parts)
+        # Chat Input Bar
+        user_query = st.chat_input("Ask anything about your documents...")
 
-        # Balanced system prompt that prevents hallucinations while allowing reasonable synthesis
-        system_prompt = (
-            "You are a helpful assistant. Answer the question based on the provided document excerpts below.\n"
-            "Use the provided context to answer as thoroughly as possible.\n"
-            "If the context truly lacks the facts needed to answer, reply with:\n"
-            "'I'm sorry, but the provided document context does not contain this information.'"
-        )
-        
-        user_prompt = f"DOCUMENT EXCERPTS:\n{formatted_context}\n\nQUESTION: {user_query}"
+        if user_query:
+            if not st.session_state.chunks or st.session_state.faiss_index is None:
+                st.warning("⚠️ Please upload and process documents in the sidebar first.")
+                return
 
-        with st.spinner("Generating answer via Groq..."):
-            client = get_groq_client()
+            # Append user prompt
+            st.session_state.chat_history.append({"role": "user", "content": user_query})
+            with st.chat_message("user"):
+                st.markdown(user_query)
+
+            # Perform Hybrid Search
+            relevant_results = hybrid_search(
+                query=user_query,
+                chunks=st.session_state.chunks,
+                index=st.session_state.faiss_index,
+                embed_model=embed_model,
+                top_k=5
+            )
+
+            context_parts = []
+            for r in relevant_results:
+                c = r["chunk"]
+                page_info = f" (Page {c['page']})" if c['page'] is not None else ""
+                context_parts.append(f"[Source: {c['file_name']}{page_info}]\n{c['text']}")
             
-            # Dynamically retrieve active models available to your Groq key
-            candidate_models = []
-            try:
-                fetched_models = client.models.list().data
-                for m in fetched_models:
-                    model_id = m.id.lower()
-                    if not any(x in model_id for x in ["whisper", "guard", "eval", "tool", "embedding"]):
-                        candidate_models.append(m.id)
-            except Exception:
-                pass
+            formatted_context = "\n\n====================\n\n".join(context_parts)
 
-            if not candidate_models:
-                candidate_models = [
-                    "llama-3.3-70b-versatile",
-                    "llama-3.1-8b-instant",
-                    "llama-3.2-3b-preview",
-                    "llama3-70b-8192"
-                ]
-
-            answer = None
-            error_details = ""
-
-            for model_name in candidate_models:
-                try:
-                    response = client.chat.completions.create(
-                        model=model_name,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt}
-                        ],
-                        temperature=0.1
-                    )
-                    answer = response.choices[0].message.content
-                    break
-                except Exception as err:
-                    error_details += f"\n- {model_name}: {err}"
-                    continue
-
-            if answer:
-                st.subheader("💡 Answer")
-                st.write(answer)
-            else:
-                st.error("❌ Failed to generate a response from Groq.")
-                with st.expander("View Error Details"):
-                    st.code(error_details)
-
-        st.markdown("---")
-        st.subheader("🔍 Retrieved Context & Sources")
-        for idx, res in enumerate(relevant_results, 1):
-            chunk = res["chunk"]
-            page_str = f" | Page {chunk['page']}" if chunk['page'] is not None else ""
+            system_prompt = (
+                "You are a helpful assistant. Answer the question based on the provided document excerpts below.\n"
+                "Use the provided context to answer as thoroughly as possible.\n"
+                "If the context truly lacks the facts needed to answer, reply with:\n"
+                "'I'm sorry, but the provided document context does not contain this information.'"
+            )
             
-            with st.expander(f"Source {idx}: {chunk['file_name']}{page_str} (Relevance Score: {res['score']:.3f})"):
-                st.write(chunk["text"])
+            user_prompt = f"DOCUMENT EXCERPTS:\n{formatted_context}\n\nQUESTION: {user_query}"
+
+            # Query Groq Engine
+            with st.chat_message("assistant"):
+                with st.spinner("Analyzing document context..."):
+                    client = get_groq_client()
+                    
+                    candidate_models = []
+                    try:
+                        fetched_models = client.models.list().data
+                        for m in fetched_models:
+                            model_id = m.id.lower()
+                            if not any(x in model_id for x in ["whisper", "guard", "eval", "tool", "embedding"]):
+                                candidate_models.append(m.id)
+                    except Exception:
+                        pass
+
+                    if not candidate_models:
+                        candidate_models = [
+                            "llama-3.3-70b-versatile",
+                            "llama-3.1-8b-instant",
+                            "llama-3.2-3b-preview",
+                            "llama3-70b-8192"
+                        ]
+
+                    answer = None
+                    error_details = ""
+
+                    for model_name in candidate_models:
+                        try:
+                            response = client.chat.completions.create(
+                                model=model_name,
+                                messages=[
+                                    {"role": "system", "content": system_prompt},
+                                    {"role": "user", "content": user_prompt}
+                                ],
+                                temperature=0.1
+                            )
+                            answer = response.choices[0].message.content
+                            break
+                        except Exception as err:
+                            error_details += f"\n- {model_name}: {err}"
+                            continue
+
+                    if answer:
+                        st.markdown(answer)
+                        
+                        with st.expander("📚 View Retrieved Sources & Relevance Scores"):
+                            for s_idx, res in enumerate(relevant_results, 1):
+                                chunk = res["chunk"]
+                                page_str = f" | Page {chunk['page']}" if chunk['page'] is not None else ""
+                                st.markdown(f"**Source {s_idx}:** `{chunk['file_name']}`{page_str} (Score: `{res['score']:.3f}`)")
+                                st.caption(chunk["text"])
+                                st.divider()
+                        
+                        # Store in history
+                        st.session_state.chat_history.append({
+                            "role": "assistant",
+                            "content": answer,
+                            "sources": relevant_results
+                        })
+                        st.rerun()
+                    else:
+                        st.error("❌ Failed to generate a response from Groq.")
+                        with st.expander("View Error Details"):
+                            st.code(error_details)
+
+    # ---------------- TAB 2: Chunk Analysis Visualizer ----------------
+    with tab_chunks:
+        st.subheader("🧩 Chunk Structure & Breakdown Analysis")
+        st.caption("Inspect how documents were segmented into paragraph-aware chunks for embedding.")
+
+        if not st.session_state.chunks:
+            st.info("No active index available. Process documents to view chunk details.")
+        else:
+            col_m1, col_m2, col_m3 = st.columns(3)
+            with col_m1:
+                st.metric("Total Chunks Created", len(st.session_state.chunks))
+            with col_m2:
+                avg_len = sum(len(c["text"]) for c in st.session_state.chunks) // len(st.session_state.chunks)
+                st.metric("Average Chunk Length", f"{avg_len} chars")
+            with col_m3:
+                st.metric("Target Split Size", "~1000 chars")
+
+            st.markdown("---")
+            st.subheader("Chunk Inspector")
+            
+            # Filter chunks by file
+            file_options = list(set([c["file_name"] for c in st.session_state.chunks]))
+            selected_file = st.selectbox("Filter by Source Document:", options=["All"] + file_options)
+
+            filtered_chunks = st.session_state.chunks
+            if selected_file != "All":
+                filtered_chunks = [c for c in st.session_state.chunks if c["file_name"] == selected_file]
+
+            for i, chunk in enumerate(filtered_chunks[:25], 1):
+                page_str = f" | Page {chunk['page']}" if chunk['page'] is not None else ""
+                with st.expander(f"Chunk #{i} - {chunk['file_name']}{page_str} ({len(chunk['text'])} chars)"):
+                    st.markdown(f"<div class='chunk-card'>{chunk['text']}</div>", unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
