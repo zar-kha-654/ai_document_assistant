@@ -48,18 +48,29 @@ def get_groq_client():
 # ------------------------------------------------------------------------------
 # 2. Text Extraction Functions
 # ------------------------------------------------------------------------------
+def clean_text(text):
+    """Normalizes whitespace and removes unprintable characters."""
+    if not text:
+        return ""
+    text = re.sub(r"\r\n", "\n", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def extract_text_from_pdf(file_path, file_name):
     """Extracts text page-by-page from a PDF document."""
     documents = []
     try:
         reader = PdfReader(file_path)
         for i, page in enumerate(reader.pages):
-            text = page.extract_text() or ""
-            if text.strip():
+            raw_text = page.extract_text() or ""
+            cleaned = clean_text(raw_text)
+            if cleaned:
                 documents.append({
                     "file_name": file_name,
                     "page": i + 1,
-                    "text": text
+                    "text": cleaned
                 })
     except Exception as e:
         st.warning(f"Failed to read PDF '{file_name}': {e}")
@@ -70,12 +81,13 @@ def extract_text_from_docx(file_path, file_name):
     """Extracts text from a DOCX document."""
     try:
         doc = DocxDocument(file_path)
-        text = "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
-        if text.strip():
+        text = "\n\n".join([p.text for p in doc.paragraphs if p.text.strip()])
+        cleaned = clean_text(text)
+        if cleaned:
             return [{
                 "file_name": file_name,
                 "page": None,
-                "text": text
+                "text": cleaned
             }]
     except Exception as e:
         st.warning(f"Failed to read DOCX '{file_name}': {e}")
@@ -87,11 +99,12 @@ def extract_text_from_txt(file_path, file_name):
     try:
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
             text = f.read()
-        if text.strip():
+        cleaned = clean_text(text)
+        if cleaned:
             return [{
                 "file_name": file_name,
                 "page": None,
-                "text": text
+                "text": cleaned
             }]
     except Exception as e:
         st.warning(f"Failed to read TXT/MD '{file_name}': {e}")
@@ -154,29 +167,60 @@ def fetch_from_google_drive(drive_url):
 
 
 # ------------------------------------------------------------------------------
-# 4. Text Chunking
+# 4. Improved Paragraph-Aware Chunking
 # ------------------------------------------------------------------------------
-def chunk_text(documents, chunk_size=500, overlap=100):
-    """Splits extracted text into overlapping chunks preserving file/page metadata."""
+def chunk_text(documents, target_chunk_size=1000, overlap_size=200):
+    """
+    Splits document text cleanly by paragraphs first to preserve full sentences.
+    Falls back to character slicing only when a single paragraph exceeds target size.
+    """
     chunks = []
+    
     for doc in documents:
         text = doc["text"]
-        start = 0
-        text_length = len(text)
+        paragraphs = text.split("\n\n")
         
-        while start < text_length:
-            end = start + chunk_size
-            chunk_str = text[start:end]
-            
+        current_chunk = ""
+        
+        for para in paragraphs:
+            para = para.strip()
+            if not para:
+                continue
+                
+            # If adding this paragraph keeps us around the target size, combine them
+            if len(current_chunk) + len(para) <= target_chunk_size:
+                current_chunk += ("\n\n" + para) if current_chunk else para
+            else:
+                # Store existing chunk if non-empty
+                if current_chunk.strip():
+                    chunks.append({
+                        "text": current_chunk.strip(),
+                        "file_name": doc["file_name"],
+                        "page": doc["page"]
+                    })
+                
+                # Handle single oversized paragraphs
+                if len(para) > target_chunk_size:
+                    start = 0
+                    while start < len(para):
+                        end = start + target_chunk_size
+                        sub_str = para[start:end]
+                        chunks.append({
+                            "text": sub_str.strip(),
+                            "file_name": doc["file_name"],
+                            "page": doc["page"]
+                        })
+                        start += (target_chunk_size - overlap_size)
+                    current_chunk = ""
+                else:
+                    current_chunk = para
+
+        if current_chunk.strip():
             chunks.append({
-                "text": chunk_str,
+                "text": current_chunk.strip(),
                 "file_name": doc["file_name"],
                 "page": doc["page"]
             })
-            
-            start += (chunk_size - overlap)
-            if start >= text_length and len(chunks) > 0:
-                break
 
     return chunks
 
@@ -199,22 +243,22 @@ def build_vector_store(chunks, embed_model):
 
 
 def keyword_search_score(query, text):
-    """Calculates simple term overlap keyword score."""
-    keywords = re.findall(r"\w+", query.lower())
+    """Calculates keyword match score based on query terms."""
+    keywords = set(re.findall(r"\w+", query.lower()))
     if not keywords:
         return 0.0
     
     text_lower = text.lower()
-    matches = sum(1 for kw in set(keywords) if kw in text_lower)
-    return matches / len(set(keywords))
+    matches = sum(1 for kw in keywords if kw in text_lower)
+    return matches / len(keywords)
 
 
-def hybrid_search(query, chunks, index, embed_model, top_k=3, alpha=0.7):
+def hybrid_search(query, chunks, index, embed_model, top_k=5, alpha=0.8):
     """Combines semantic (FAISS) and keyword search scores."""
     query_emb = embed_model.encode([query], convert_to_numpy=True)
     faiss.normalize_L2(query_emb)
     
-    num_candidates = min(len(chunks), top_k * 3)
+    num_candidates = min(len(chunks), max(top_k * 3, 10))
     distances, indices = index.search(query_emb, num_candidates)
     
     results = []
@@ -299,7 +343,7 @@ def main():
                 st.session_state.faiss_index = faiss_idx
                 st.session_state.docs_processed = processed_file_names
                 
-            st.success(f"Processing Complete! Generated **{len(chunks)}** chunks across uploaded files.")
+            st.success(f"Processing Complete! Generated **{len(chunks)}** text chunks.")
         else:
             st.warning("No valid text extracted. Check your uploaded files or link.")
 
@@ -314,30 +358,32 @@ def main():
             st.warning("Please upload and process documents before asking questions.")
             return
 
+        # Increased top_k to 5 to provide more background context
         relevant_results = hybrid_search(
             query=user_query,
             chunks=st.session_state.chunks,
             index=st.session_state.faiss_index,
             embed_model=embed_model,
-            top_k=3
+            top_k=5
         )
 
         context_parts = []
         for r in relevant_results:
             c = r["chunk"]
             page_info = f" (Page {c['page']})" if c['page'] is not None else ""
-            context_parts.append(f"Source: {c['file_name']}{page_info}\nContent: {c['text']}")
+            context_parts.append(f"[Source: {c['file_name']}{page_info}]\n{c['text']}")
         
-        formatted_context = "\n\n---\n\n".join(context_parts)
+        formatted_context = "\n\n====================\n\n".join(context_parts)
 
+        # Balanced system prompt that prevents hallucinations while allowing reasonable synthesis
         system_prompt = (
-            "You are a strict QA assistant. Answer the user's question using ONLY the provided document context below.\n"
-            "If the information required to answer the question is not present in the context, respond with:\n"
-            "'I'm sorry, but the provided document context does not contain this information.'\n"
-            "Do not use outside knowledge or extrapolate beyond the text."
+            "You are a helpful assistant. Answer the question based on the provided document excerpts below.\n"
+            "Use the provided context to answer as thoroughly as possible.\n"
+            "If the context truly lacks the facts needed to answer, reply with:\n"
+            "'I'm sorry, but the provided document context does not contain this information.'"
         )
         
-        user_prompt = f"Context:\n{formatted_context}\n\nQuestion: {user_query}"
+        user_prompt = f"DOCUMENT EXCERPTS:\n{formatted_context}\n\nQUESTION: {user_query}"
 
         with st.spinner("Generating answer via Groq..."):
             client = get_groq_client()
@@ -348,13 +394,11 @@ def main():
                 fetched_models = client.models.list().data
                 for m in fetched_models:
                     model_id = m.id.lower()
-                    # Exclude non-chat / specialized models
                     if not any(x in model_id for x in ["whisper", "guard", "eval", "tool", "embedding"]):
                         candidate_models.append(m.id)
             except Exception:
                 pass
 
-            # Fallback list if dynamic listing fails
             if not candidate_models:
                 candidate_models = [
                     "llama-3.3-70b-versatile",
@@ -374,7 +418,7 @@ def main():
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt}
                         ],
-                        temperature=0.0
+                        temperature=0.1
                     )
                     answer = response.choices[0].message.content
                     break
@@ -396,7 +440,7 @@ def main():
             chunk = res["chunk"]
             page_str = f" | Page {chunk['page']}" if chunk['page'] is not None else ""
             
-            with st.expander(f"Source {idx}: {chunk['file_name']}{page_str} (Score: {res['score']:.3f})"):
+            with st.expander(f"Source {idx}: {chunk['file_name']}{page_str} (Relevance Score: {res['score']:.3f})"):
                 st.write(chunk["text"])
 
 
