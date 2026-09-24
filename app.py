@@ -38,42 +38,51 @@ def get_groq_client():
 def extract_text_from_pdf(file_path, file_name):
     """Extracts text page-by-page from a PDF document."""
     documents = []
-    reader = PdfReader(file_path)
-    for i, page in enumerate(reader.pages):
-        text = page.extract_text() or ""
-        if text.strip():
-            documents.append({
-                "file_name": file_name,
-                "page": i + 1,
-                "text": text
-            })
+    try:
+        reader = PdfReader(file_path)
+        for i, page in enumerate(reader.pages):
+            text = page.extract_text() or ""
+            if text.strip():
+                documents.append({
+                    "file_name": file_name,
+                    "page": i + 1,
+                    "text": text
+                })
+    except Exception as e:
+        st.warning(f"Failed to read PDF '{file_name}': {e}")
     return documents
 
 
 def extract_text_from_docx(file_path, file_name):
     """Extracts text from a DOCX document."""
-    doc = DocxDocument(file_path)
-    text = "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
-    if not text.strip():
-        return []
-    return [{
-        "file_name": file_name,
-        "page": None,
-        "text": text
-    }]
+    try:
+        doc = DocxDocument(file_path)
+        text = "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
+        if text.strip():
+            return [{
+                "file_name": file_name,
+                "page": None,
+                "text": text
+            }]
+    except Exception as e:
+        st.warning(f"Failed to read DOCX '{file_name}': {e}")
+    return []
 
 
 def extract_text_from_txt(file_path, file_name):
     """Extracts text from a plain TXT or Markdown file."""
-    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-        text = f.read()
-    if not text.strip():
-        return []
-    return [{
-        "file_name": file_name,
-        "page": None,
-        "text": text
-    }]
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            text = f.read()
+        if text.strip():
+            return [{
+                "file_name": file_name,
+                "page": None,
+                "text": text
+            }]
+    except Exception as e:
+        st.warning(f"Failed to read TXT/MD '{file_name}': {e}")
+    return []
 
 
 def process_file_path(file_path, file_name):
@@ -85,11 +94,13 @@ def process_file_path(file_path, file_name):
         return extract_text_from_docx(file_path, file_name)
     elif ext in [".txt", ".md"]:
         return extract_text_from_txt(file_path, file_name)
+    else:
+        st.warning(f"Unsupported file format or missing extension for: {file_name}")
     return []
 
 
 # ------------------------------------------------------------------------------
-# 3. Google Drive Handling
+# 3. Google Drive Handling (Fixed Download & Extension Resolution)
 # ------------------------------------------------------------------------------
 def fetch_from_google_drive(drive_url):
     """Downloads files/folders from Google Drive using gdown."""
@@ -100,33 +111,37 @@ def fetch_from_google_drive(drive_url):
                 folder_files = gdown.download_folder(url=drive_url, output=tmp_dir, quiet=True)
                 if folder_files:
                     for fpath in folder_files:
-                        fname = os.path.basename(fpath)
-                        extracted = process_file_path(fpath, fname)
-                        downloaded_docs.extend(extracted)
+                        if os.path.isfile(fpath):
+                            fname = os.path.basename(fpath)
+                            extracted = process_file_path(fpath, fname)
+                            downloaded_docs.extend(extracted)
             else:
-                # Use fuzzy download via gdown CLI/helper logic to resolve file name
-                output_path = os.path.join(tmp_dir, "downloaded_file")
-                fpath = gdown.download(url=drive_url, output=output_path, quiet=True)
+                # Let gdown auto-detect output filename in tmp_dir
+                fpath = gdown.download(url=drive_url, output=tmp_dir + "/", quiet=True)
                 
-                if fpath:
-                    # Retrieve actual filename if gdown preserved it, or fall back
+                if fpath and os.path.exists(fpath):
                     fname = os.path.basename(fpath)
                     
-                    # If extension was lost during temp download, try parsing extension from original URL
+                    # Fallback if gdown didn't append extension
                     if not os.path.splitext(fname)[1]:
-                        for ext in [".pdf", ".docx", ".txt", ".md"]:
-                            if ext in drive_url.lower():
-                                new_path = fpath + ext
+                        for known_ext in [".pdf", ".docx", ".txt", ".md"]:
+                            if known_ext in drive_url.lower():
+                                new_path = fpath + known_ext
                                 os.rename(fpath, new_path)
                                 fpath = new_path
-                                fname = fname + ext
+                                fname = fname + known_ext
                                 break
-
+                    
                     extracted = process_file_path(fpath, fname)
                     downloaded_docs.extend(extracted)
+                else:
+                    st.error("Google Drive download failed. Ensure the link is set to 'Anyone with the link'.")
         except Exception as e:
             st.error(f"Error fetching from Google Drive: {e}")
+            
     return downloaded_docs
+
+
 # ------------------------------------------------------------------------------
 # 4. Text Chunking
 # ------------------------------------------------------------------------------
@@ -261,7 +276,8 @@ def main():
         # 1. Process Local Uploads
         if uploaded_files:
             for ufile in uploaded_files:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(ufile.name)[1]) as tmp:
+                ext = os.path.splitext(ufile.name)[1]
+                with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
                     tmp.write(ufile.getvalue())
                     tmp_path = tmp.name
                 
