@@ -24,11 +24,24 @@ def load_embedding_model():
 
 
 def get_groq_client():
-    """Retrieves Groq client using secrets."""
-    api_key = st.secrets.get("groq_api_key") or os.getenv("GROQ_API_KEY")
+    """Retrieves Groq client using secrets or environment variable."""
+    api_key = None
+    
+    # Check Streamlit secrets
+    try:
+        if "groq_api_key" in st.secrets:
+            api_key = st.secrets["groq_api_key"]
+    except Exception:
+        pass
+    
+    # Fallback to environment variable
+    if not api_key:
+        api_key = os.getenv("GROQ_API_KEY")
+
     if not api_key:
         st.error("🔑 Groq API key not found! Please configure `groq_api_key` in `.streamlit/secrets.toml`.")
         st.stop()
+        
     return Groq(api_key=api_key)
 
 
@@ -352,10 +365,13 @@ def main():
         with st.spinner("Generating answer via Groq..."):
             client = get_groq_client()
             
-            # Use ACTIVE, supported Groq model IDs
+            # Active, supported Groq model endpoints with automatic fallback
             active_models = [
                 "llama-3.3-70b-versatile",
-                "llama-3.1-8b-instant"
+                "llama-3.1-8b-instant",
+                "llama3-70b-8192",
+                "llama3-8b-8192",
+                "mixtral-8x7b-32768"
             ]
             
             answer = None
@@ -372,7 +388,7 @@ def main():
                         temperature=0.0
                     )
                     answer = response.choices[0].message.content
-                    break  # Success, exit loop
+                    break  # Exit on success
                 except Exception as err:
                     error_details += f"\n- {model_name}: {err}"
                     continue
@@ -383,10 +399,6 @@ def main():
             else:
                 st.error("❌ Failed to generate a response from Groq.")
                 st.expander("View Error Details").write(error_details)
-
-        # Display Answer
-        st.subheader("💡 Answer")
-        st.write(answer)
 
         # Display Retrieved Sources below the answer
         st.markdown("---")
