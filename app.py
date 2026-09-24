@@ -113,7 +113,7 @@ def process_file_path(file_path, file_name):
 
 
 # ------------------------------------------------------------------------------
-# 3. Google Drive Handling (Fixed Download & Extension Resolution)
+# 3. Google Drive Handling
 # ------------------------------------------------------------------------------
 def fetch_from_google_drive(drive_url):
     """Downloads files/folders from Google Drive using gdown."""
@@ -129,13 +129,11 @@ def fetch_from_google_drive(drive_url):
                             extracted = process_file_path(fpath, fname)
                             downloaded_docs.extend(extracted)
             else:
-                # Let gdown auto-detect output filename in tmp_dir
                 fpath = gdown.download(url=drive_url, output=tmp_dir + "/", quiet=True)
                 
                 if fpath and os.path.exists(fpath):
                     fname = os.path.basename(fpath)
                     
-                    # Fallback if gdown didn't append extension
                     if not os.path.splitext(fname)[1]:
                         for known_ext in [".pdf", ".docx", ".txt", ".md"]:
                             if known_ext in drive_url.lower():
@@ -191,7 +189,6 @@ def build_vector_store(chunks, embed_model):
     texts = [c["text"] for c in chunks]
     embeddings = embed_model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
     
-    # Normalize for cosine similarity
     faiss.normalize_L2(embeddings)
     
     dimension = embeddings.shape[1]
@@ -214,11 +211,9 @@ def keyword_search_score(query, text):
 
 def hybrid_search(query, chunks, index, embed_model, top_k=3, alpha=0.7):
     """Combines semantic (FAISS) and keyword search scores."""
-    # 1. Semantic search
     query_emb = embed_model.encode([query], convert_to_numpy=True)
     faiss.normalize_L2(query_emb)
     
-    # Retrieve top candidates via FAISS
     num_candidates = min(len(chunks), top_k * 3)
     distances, indices = index.search(query_emb, num_candidates)
     
@@ -228,10 +223,7 @@ def hybrid_search(query, chunks, index, embed_model, top_k=3, alpha=0.7):
             continue
         chunk = chunks[idx]
         
-        # 2. Keyword score
         kw_score = keyword_search_score(query, chunk["text"])
-        
-        # Combined score
         combined_score = alpha * float(sem_score) + (1 - alpha) * float(kw_score)
         
         results.append({
@@ -241,7 +233,6 @@ def hybrid_search(query, chunks, index, embed_model, top_k=3, alpha=0.7):
             "kw_score": float(kw_score)
         })
     
-    # Sort by hybrid score
     results.sort(key=lambda x: x["score"], reverse=True)
     return results[:top_k]
 
@@ -253,7 +244,6 @@ def main():
     st.title("📄 AI Document Assistant")
     st.markdown("Upload local documents or paste Google Drive links to analyze, search, and ask questions.")
 
-    # Initialize Session State
     if "chunks" not in st.session_state:
         st.session_state.chunks = []
     if "faiss_index" not in st.session_state:
@@ -263,30 +253,25 @@ def main():
 
     embed_model = load_embedding_model()
 
-    # Sidebar: Document Sources
     with st.sidebar:
         st.header("📂 Document Ingestion")
         
-        # Local Upload
         uploaded_files = st.file_uploader(
             "Upload PDF, DOCX, TXT, MD",
             type=["pdf", "docx", "txt", "md"],
             accept_multiple_files=True
         )
         
-        # Google Drive Link
         st.markdown("---")
         st.subheader("🌐 Google Drive Link")
         drive_url = st.text_input("Paste Drive File or Folder Link:")
         
         process_btn = st.button("Process Documents", type="primary")
 
-    # Processing Pipeline
     if process_btn:
         all_extracted_docs = []
         processed_file_names = []
 
-        # 1. Process Local Uploads
         if uploaded_files:
             for ufile in uploaded_files:
                 ext = os.path.splitext(ufile.name)[1]
@@ -299,20 +284,17 @@ def main():
                 processed_file_names.append(ufile.name)
                 os.remove(tmp_path)
 
-        # 2. Process Google Drive Link
         if drive_url.strip():
             with st.spinner("Fetching from Google Drive..."):
                 drive_docs = fetch_from_google_drive(drive_url.strip())
                 all_extracted_docs.extend(drive_docs)
                 processed_file_names.append("Google Drive Source")
 
-        # 3. Chunking & Embeddings
         if all_extracted_docs:
             with st.spinner("Chunking text and generating embeddings..."):
                 chunks = chunk_text(all_extracted_docs)
                 faiss_idx, _ = build_vector_store(chunks, embed_model)
                 
-                # Persist to session state
                 st.session_state.chunks = chunks
                 st.session_state.faiss_index = faiss_idx
                 st.session_state.docs_processed = processed_file_names
@@ -321,53 +303,25 @@ def main():
         else:
             st.warning("No valid text extracted. Check your uploaded files or link.")
 
-    # Status Overview
     if st.session_state.chunks:
         st.info(f"📊 **Index Active:** {len(st.session_state.chunks)} total text chunks stored in memory.")
 
-    # Question Answering Interface
     st.markdown("### 💬 Ask Questions")
     user_query = st.text_input("Enter your question based on the document context:")
 
     if user_query:
-        with st.spinner("Generating answer via Groq..."):
-            client = get_groq_client()
-            
-            # Updated active Groq model endpoints with fallback strategy
-            active_models = [
-                "gemma2-9b-it",
-                "deepseek-r1-distill-llama-70b",
-                "llama-3.3-70b-versatile",
-                "llama-3.1-8b-instant"
-            ]
-            
-            answer = None
-            error_details = ""
+        if not st.session_state.chunks or st.session_state.faiss_index is None:
+            st.warning("Please upload and process documents before asking questions.")
+            return
 
-            for model_name in active_models:
-                try:
-                    response = client.chat.completions.create(
-                        model=model_name,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt}
-                        ],
-                        temperature=0.0
-                    )
-                    answer = response.choices[0].message.content
-                    break  # Exit loop as soon as a model succeeds
-                except Exception as err:
-                    error_details += f"\n- {model_name}: {err}"
-                    continue
+        relevant_results = hybrid_search(
+            query=user_query,
+            chunks=st.session_state.chunks,
+            index=st.session_state.faiss_index,
+            embed_model=embed_model,
+            top_k=3
+        )
 
-            if answer:
-                st.subheader("💡 Answer")
-                st.write(answer)
-            else:
-                st.error("❌ Failed to generate a response from Groq.")
-                with st.expander("View Error Details"):
-                    st.code(error_details)
-        # Prepare LLM Context
         context_parts = []
         for r in relevant_results:
             c = r["chunk"]
@@ -376,7 +330,6 @@ def main():
         
         formatted_context = "\n\n---\n\n".join(context_parts)
 
-        # Prompt Groq LLM
         system_prompt = (
             "You are a strict QA assistant. Answer the user's question using ONLY the provided document context below.\n"
             "If the information required to answer the question is not present in the context, respond with:\n"
@@ -389,12 +342,11 @@ def main():
         with st.spinner("Generating answer via Groq..."):
             client = get_groq_client()
             
-            # Active, currently supported Groq model endpoints with automatic fallback
-        active_models = [
-            "gemma2-9b-it",
-            "deepseek-r1-distill-llama-70b",
-            "llama-3.3-70b-versatile",
-            "llama-3.1-8b-instant"
+            # Active production Groq models
+            active_models = [
+                "llama-3.3-70b-versatile",
+                "llama-3.1-8b-instant",
+                "gemma2-9b-it"
             ]
             
             answer = None
@@ -411,7 +363,7 @@ def main():
                         temperature=0.0
                     )
                     answer = response.choices[0].message.content
-                    break  # Exit on success
+                    break
                 except Exception as err:
                     error_details += f"\n- {model_name}: {err}"
                     continue
@@ -421,9 +373,9 @@ def main():
                 st.write(answer)
             else:
                 st.error("❌ Failed to generate a response from Groq.")
-                st.expander("View Error Details").write(error_details)
+                with st.expander("View Error Details"):
+                    st.code(error_details)
 
-        # Display Retrieved Sources below the answer
         st.markdown("---")
         st.subheader("🔍 Retrieved Context & Sources")
         for idx, res in enumerate(relevant_results, 1):
