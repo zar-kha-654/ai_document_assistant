@@ -330,19 +330,43 @@ def main():
     user_query = st.text_input("Enter your question based on the document context:")
 
     if user_query:
-        if not st.session_state.chunks or st.session_state.faiss_index is None:
-            st.warning("Please upload and process documents before asking questions.")
-            return
+        with st.spinner("Generating answer via Groq..."):
+            client = get_groq_client()
+            
+            # Updated active Groq model endpoints with fallback strategy
+            active_models = [
+                "gemma2-9b-it",
+                "deepseek-r1-distill-llama-70b",
+                "llama-3.3-70b-versatile",
+                "llama-3.1-8b-instant"
+            ]
+            
+            answer = None
+            error_details = ""
 
-        # Perform Hybrid Search
-        relevant_results = hybrid_search(
-            query=user_query,
-            chunks=st.session_state.chunks,
-            index=st.session_state.faiss_index,
-            embed_model=embed_model,
-            top_k=3
-        )
+            for model_name in active_models:
+                try:
+                    response = client.chat.completions.create(
+                        model=model_name,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        temperature=0.0
+                    )
+                    answer = response.choices[0].message.content
+                    break  # Exit loop as soon as a model succeeds
+                except Exception as err:
+                    error_details += f"\n- {model_name}: {err}"
+                    continue
 
+            if answer:
+                st.subheader("💡 Answer")
+                st.write(answer)
+            else:
+                st.error("❌ Failed to generate a response from Groq.")
+                with st.expander("View Error Details"):
+                    st.code(error_details)
         # Prepare LLM Context
         context_parts = []
         for r in relevant_results:
