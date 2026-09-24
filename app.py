@@ -96,7 +96,7 @@ def fetch_from_google_drive(drive_url):
     downloaded_docs = []
     with tempfile.TemporaryDirectory() as tmp_dir:
         try:
-            if "folders/" in drive_url:
+            if "folders/" in drive_url or "folder" in drive_url:
                 folder_files = gdown.download_folder(url=drive_url, output=tmp_dir, quiet=True)
                 if folder_files:
                     for fpath in folder_files:
@@ -104,18 +104,29 @@ def fetch_from_google_drive(drive_url):
                         extracted = process_file_path(fpath, fname)
                         downloaded_docs.extend(extracted)
             else:
-                # Removed fuzzy=True to fix the compatibility error
-                fpath = gdown.download(url=drive_url, output=os.path.join(tmp_dir, "drive_doc"), quiet=True)
+                # Use fuzzy download via gdown CLI/helper logic to resolve file name
+                output_path = os.path.join(tmp_dir, "downloaded_file")
+                fpath = gdown.download(url=drive_url, output=output_path, quiet=True)
+                
                 if fpath:
-                    fname = "Drive_Document"
-                    if drive_url.endswith((".pdf", ".docx", ".txt", ".md")):
-                        fname = drive_url.split("/")[-1].split("?")[0]
+                    # Retrieve actual filename if gdown preserved it, or fall back
+                    fname = os.path.basename(fpath)
+                    
+                    # If extension was lost during temp download, try parsing extension from original URL
+                    if not os.path.splitext(fname)[1]:
+                        for ext in [".pdf", ".docx", ".txt", ".md"]:
+                            if ext in drive_url.lower():
+                                new_path = fpath + ext
+                                os.rename(fpath, new_path)
+                                fpath = new_path
+                                fname = fname + ext
+                                break
+
                     extracted = process_file_path(fpath, fname)
                     downloaded_docs.extend(extracted)
         except Exception as e:
             st.error(f"Error fetching from Google Drive: {e}")
     return downloaded_docs
-
 # ------------------------------------------------------------------------------
 # 4. Text Chunking
 # ------------------------------------------------------------------------------
