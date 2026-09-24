@@ -339,7 +339,7 @@ def main():
         
         formatted_context = "\n\n---\n\n".join(context_parts)
 
-        # Prompt Groq LLM
+        # Prompt Groq LLM with supported models
         system_prompt = (
             "You are a strict QA assistant. Answer the user's question using ONLY the provided document context below.\n"
             "If the information required to answer the question is not present in the context, respond with:\n"
@@ -352,11 +352,18 @@ def main():
         with st.spinner("Generating answer via Groq..."):
             client = get_groq_client()
             
-            # Primary and fallback model options
-            models_to_try = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
-            answer = None
+            # Known Groq model strings in order of preference
+            available_models = [
+                "llama-3.3-70b-versatile",
+                "llama3-8b-8192",
+                "llama3-70b-8192",
+                "mixtral-8x7b-32768"
+            ]
             
-            for model_name in models_to_try:
+            answer = None
+            last_err = ""
+
+            for model_name in available_models:
                 try:
                     response = client.chat.completions.create(
                         model=model_name,
@@ -367,17 +374,24 @@ def main():
                         temperature=0.0
                     )
                     answer = response.choices[0].message.content
-                    break  # Break loop if request succeeds
-                except Exception as e:
-                    if "404" in str(e) or "NotFoundError" in str(type(e).__name__):
-                        st.warning(f"Model '{model_name}' not available on this API key. Trying alternative...")
-                        continue
-                    else:
-                        st.error(f"Groq API Error: {e}")
-                        st.stop()
+                    break  # Success!
+                except Exception as err:
+                    last_err = str(err)
+                    continue
 
-            if not answer:
-                st.error("Could not generate answer. Please verify your Groq API key and accessible models.")
+            if answer:
+                st.subheader("💡 Answer")
+                st.write(answer)
+            else:
+                st.error("🔑 Groq API Key Authentication or Model Permission Error!")
+                st.warning(
+                    "Groq could not authenticate your key or locate active models.\n\n"
+                    "**Fix Instructions:**\n"
+                    "1. Get a free key at [console.groq.com](https://console.groq.com/keys)\n"
+                    "2. Add it to Streamlit Secrets: **Manage app** → **Settings** → **Secrets**\n"
+                    "```toml\ngroq_api_key = \"gsk_your_key_here\"\n```"
+                )
+                st.expander("Show detailed error").write(last_err)
                 st.stop()
 
         # Display Answer
