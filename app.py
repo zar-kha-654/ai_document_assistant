@@ -104,7 +104,8 @@ def fetch_from_google_drive(drive_url):
                         extracted = process_file_path(fpath, fname)
                         downloaded_docs.extend(extracted)
             else:
-                fpath = gdown.download(url=drive_url, output=os.path.join(tmp_dir, "drive_doc"), quiet=True, fuzzy=True)
+                # Removed fuzzy=True to fix the compatibility error
+                fpath = gdown.download(url=drive_url, output=os.path.join(tmp_dir, "drive_doc"), quiet=True)
                 if fpath:
                     fname = "Drive_Document"
                     if drive_url.endswith((".pdf", ".docx", ".txt", ".md")):
@@ -114,7 +115,6 @@ def fetch_from_google_drive(drive_url):
         except Exception as e:
             st.error(f"Error fetching from Google Drive: {e}")
     return downloaded_docs
-
 
 # ------------------------------------------------------------------------------
 # 4. Text Chunking
